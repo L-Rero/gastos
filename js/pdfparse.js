@@ -17,8 +17,33 @@ const PDFP = (() => {
   const RX_AMT = /^([-+−]?)\s?(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})\s?([-+−]?)(?:\s?(?:€|EUR|D|H))?$/i;
   const SKIP = /saldo\s+(anterior|inicial)|suma\s+y\s+sigue|total(es)?\s+(movimientos|cargos|abonos)|p[aá]gina\s+\d|iban|bic|titular/i;
 
-  const toDate = m => { let [, d, mo, y] = m; if (y.length === 2) y = '20' + y; d = +d; mo = +mo;
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null; return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; };
+  // Fechas con el mes en letras, como en los extractos de Ibercaja: «30 sep.», «02 ene.» (sin año)
+  const MESES = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
+  const RX_MDATE = /^(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic)[a-z]*\.?(?:\s+(\d{4}))?$/i;
+  const isDate = s => RX_DATE.test(s) || RX_MDATE.test(s);
+  /* devuelve {d, m, y} (y puede ser null si el PDF no indica el año) */
+  const dateOf = s => {
+    let m = s.match(RX_DATE), d, mo, y = null;
+    if (m) { d = +m[1]; mo = +m[2]; y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; }
+    else if ((m = s.match(RX_MDATE))) { d = +m[1]; mo = MESES[m[2].toLowerCase()]; y = m[3] ? +m[3] : null; }
+    else return null;
+    return mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? { d, m: mo, y } : null;
+  };
+  const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const toDate = m => { const r = dateOf(m[0]); return r && r.y ? iso(r.y, r.m, r.d) : null; };
+  /* Año de referencia: el periodo del extracto («de 01/09/2026 a 30/09/2026») o la fecha completa más reciente */
+  function yearResolver(L) {
+    const all = L.map(l => l.cells.map(c => c.s).join(' ')).join('\n'), F = '(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})';
+    const per = all.match(new RegExp(F + '\\s*(?:a|al|hasta|-|–)\\s*' + F, 'i'));
+    let start = null, end = null;
+    if (per) { start = iso(+per[3], +per[2], +per[1]); end = iso(+per[6], +per[5], +per[4]); }
+    else { const full = [...all.matchAll(new RegExp(F, 'g'))].map(x => iso(+x[3], +x[2], +x[1])).sort(); end = full.pop() || new Date().toISOString().slice(0, 10); }
+    const eY = +end.slice(0, 4), eM = +end.slice(5, 7);
+    return (d, m) => {
+      if (start) for (let y = eY; y >= +start.slice(0, 4); y--) { const c = iso(y, m, d); if (c >= start && c <= end) return c; }
+      return iso(m <= eM ? eY : eY - 1, m, d);
+    };
+  }
   const toAmt = s => { const m = String(s).trim().match(RX_AMT); if (!m) return null;
     const v = +(m[2].replace(/\./g, '') + '.' + m[3]); const neg = /[-−]/.test(m[1] + m[4]); const sgn = /[-+−]/.test(m[1] + m[4]) || /\s?D$/i.test(s) || /\s?H$/i.test(s);
     return { v: neg || /\s?D$/i.test(s) ? -v : v, signed: sgn }; };
@@ -58,7 +83,7 @@ const PDFP = (() => {
       if (/^(debe|cargos?|reintegros?)$/i.test(c.s)) colD = c.x + c.w / 2;
       if (/^(haber|abonos?|ingresos?)$/i.test(c.s)) colH = c.x + c.w / 2;
     }
-    const rows = []; let opening = null, last = null;
+    const rows = [], yr = yearResolver(L); let opening = null, last = null;
     for (const l of L) {
       const txt = l.cells.map(c => c.s).join(' ');
       if (/saldo\s+(anterior|inicial)/i.test(txt)) { const a = [...l.cells].reverse().map(c => toAmt(c.s)).find(Boolean); if (a && opening == null) opening = a.v; last = null; continue; }
@@ -68,7 +93,7 @@ const PDFP = (() => {
         const m = c.s.match(/^(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})\s+(.+)$/);
         if (m) { cells.push({ ...c, s: m[1] }); cells.push({ ...c, x: c.x + 1, s: m[2] }); } else cells.push(c);
       }
-      const dm = cells.length && cells[0].s.match(RX_DATE);
+      const dm = cells.length && dateOf(cells[0].s);
       if (!dm) {
         // línea de continuación del concepto
         if (last && !SKIP.test(txt) && Math.abs(last.y - l.y) < last.h * 2.6 && last.page === l.page && last.extra < 2 && !cells.some(c => toAmt(c.s))) {
@@ -76,13 +101,13 @@ const PDFP = (() => {
         } else last = null;
         continue;
       }
-      const date = toDate(dm); if (!date) { last = null; continue; }
+      const date = dm.y ? iso(dm.y, dm.m, dm.d) : yr(dm.d, dm.m);
       let rest = cells.slice(1);
-      if (rest[0] && RX_DATE.test(rest[0].s)) rest = rest.slice(1); // fecha valor
+      if (rest[0] && isDate(rest[0].s)) rest = rest.slice(1); // fecha valor
       const amts = [];
       while (rest.length && amts.length < 2) { const a = toAmt(rest[rest.length - 1].s); if (!a) break; amts.unshift({ ...a, x: rest[rest.length - 1].x + rest[rest.length - 1].w / 2 }); rest.pop(); }
       // una fecha valor puede quedar justo antes del importe
-      while (rest.length && RX_DATE.test(rest[rest.length - 1].s)) rest.pop();
+      while (rest.length && isDate(rest[rest.length - 1].s)) rest.pop();
       if (!amts.length) { last = null; continue; }
       const concept = rest.map(c => c.s).join(' ').replace(/\s+/g, ' ').trim();
       if (SKIP.test(concept)) { last = null; continue; }
@@ -95,6 +120,7 @@ const PDFP = (() => {
     // orden del extracto: ascendente o descendente
     const desc = rows[0].date > rows[rows.length - 1].date;
     const chrono = desc ? [...rows].reverse() : rows;
+    const minusMarked = chrono.some(r => r.amount != null && r.amount < 0);
     // signo deducido por el saldo cuando no viene en el PDF
     if (chrono.some(r => r.amount == null)) {
       let prev = opening;
@@ -103,7 +129,8 @@ const PDFP = (() => {
           r.amount = Math.abs(prev + r.abs - r.bal) < Math.abs(prev - r.abs - r.bal) ? r.abs : -r.abs;
         if (r.bal != null) prev = r.bal;
       });
-      chrono.forEach(r => { if (r.amount == null) { r.amount = -r.abs; r.guess = true; } });
+      // si el extracto marca los cargos con «−» (caso de Ibercaja), lo que no lleva signo es un abono
+      chrono.forEach(r => { if (r.amount == null) { if (minusMarked) r.amount = r.abs; else { r.amount = -r.abs; r.guess = true; } } });
     }
     const lastR = chrono[chrono.length - 1];
     return { rows: chrono.map(r => ({ date: r.date, concept: r.concept, amount: Math.round(r.amount * 100) / 100, guess: !!r.guess })), bal: lastR.bal, balDate: lastR.bal != null ? lastR.date : null };

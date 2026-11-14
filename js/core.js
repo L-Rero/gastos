@@ -234,14 +234,18 @@ function closeY(y) { if (y < Y0) return openY(y + 1); if (y === Y0) { const lm =
 function openY(y) { if (y === Y0) return cur() - rnet(y); if (y > Y0) return closeY(y - 1); return openY(y + 1) - rnet(y); }
 const ryrs = () => [...new Set(S.tx.filter(t => !t.tr && !hidAcc(t.acc)).map(t => +t.date.slice(0,4)))].sort((a, b) => a - b);
 
+/* Similitud entre conceptos (0 a 1), ignorando números y signos. Se exige ≥ 0,9 para categorizar solo. */
+const lev = (a, b) => { if (a === b) return 0; const m = a.length, n = b.length; if (!m || !n) return Math.max(m, n); let p = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const c = [i]; for (let j = 1; j <= n; j++) c[j] = Math.min(p[j] + 1, c[j-1] + 1, p[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); p = c; } return p[n]; };
+const SIM_MIN = 0.9;
+const simNorm = (k, n) => { if (k === n) return 1; if (!k || !n || Math.abs(n.length - k.length) > Math.ceil(Math.max(n.length, k.length) * .1)) return 0; return 1 - lev(k, n) / Math.max(n.length, k.length); };
+const simConcept = (a, b) => simNorm(norm(a), norm(b));
 function matchCat(concept, sign) {
   const k = norm(concept); if (!k) return null;
-  const lev = (a, b) => { if (a === b) return 0; const m = a.length, n = b.length; if (!m || !n) return Math.max(m, n); let p = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const c = [i]; for (let j = 1; j <= n; j++) c[j] = Math.min(p[j] + 1, c[j-1] + 1, p[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); p = c; } return p[n]; };
   const seen = new Map();
   Object.keys(S.rules).forEach(r => { const v = S.rules[r]; if (v && v.cat) seen.set(r, { cat: v.cat, sub: v.sub||'', from: r }); });
   S.tx.forEach(t => { if (t.cat && t.concept && (sign == null || (t.amount > 0) === (sign > 0))) { const n = norm(t.concept); if (n && !seen.has(n)) seen.set(n, { cat: t.cat, sub: t.sub||'', from: t.concept }); } });
   if (seen.has(k)) return Object.assign({ sim: 1 }, seen.get(k));
   let best = null, bs = 0;
-  seen.forEach((v, n) => { if (Math.abs(n.length - k.length) > Math.ceil(Math.max(n.length, k.length) * .1)) return; const L = Math.max(n.length, k.length), x = L ? 1 - lev(k, n) / L : 1; if (x > bs) { bs = x; best = v; } });
-  return best && bs >= .9 ? Object.assign({ sim: bs }, best) : null;
+  seen.forEach((v, n) => { const x = simNorm(k, n); if (x > bs) { bs = x; best = v; } });
+  return best && bs >= SIM_MIN ? Object.assign({ sim: bs }, best) : null;
 }

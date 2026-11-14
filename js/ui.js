@@ -198,6 +198,7 @@ async function readPdf() {
   lastPdfText = res.text;
   const rows = res.rows.map(r => { const k = matchCat(r.concept, r.amount), dup = S.tx.some(t => t.acc === acc && t.date === r.date && t.concept === r.concept && t.amount === r.amount); return { date: r.date, concept: r.concept, amount: r.amount, guess: r.guess, cat: k ? k.cat : '', sub: k ? k.sub : '', auto: !!k, from: k && k.sim < 1 ? k.from : '', dup, on: !dup, note: '' }; });
   imp = { acc, rows: (imp ? imp.rows.filter(r => r.man) : []).concat(rows), bal: res.bal, balDate: res.balDate };
+  batchFill();
   $('#is').innerHTML = rows.length ? `${rows.length} movimientos encontrados. ${rows.some(r => r.guess) ? '<b>Revisa el signo</b> de los marcados con ⚠︎. ' : ''}<button class="bt g" onclick="showPdfText()">Ver texto extraído</button>` : `No se han encontrado movimientos en este PDF. <button class="bt g" onclick="showPdfText()">Ver texto extraído</button>`;
   rv();
 }
@@ -209,7 +210,22 @@ function rv() {
 const rvBtn = () => { const b = $('#okb'); if (b) b.textContent = 'Guardar ' + imp.rows.filter(r => r.on).length + ' movimientos'; };
 function flip(i) { const r = imp.rows[i]; r.amount = -r.amount; r.guess = false; const k = matchCat(r.concept, r.amount); if (r.auto || !r.cat) { r.cat = k ? k.cat : ''; r.sub = k ? k.sub : ''; r.auto = !!k; } rv(); }
 function disImp() { imp = null; $('#rv').innerHTML = ''; const f = $('#pf'); if (f) f.value = ''; const fn = $('#pfn'); if (fn) fn.textContent = 'Ningún archivo seleccionado'; $('#is').textContent = 'Movimientos descartados. No se ha guardado nada.'; toast('Descartado'); }
-function pk(i, v) { const [c, s] = v.split('|'), r = imp.rows[i]; r.cat = c; r.sub = s || ''; r.auto = false; r.from = ''; }
+/* Movimientos del mismo extracto: si uno sin categoría se parece ≥ 90 % a otro que la tiene, toma la misma */
+function batchFill() {
+  imp.rows.forEach(r => {
+    if (r.cat) return;
+    const o = imp.rows.find(o => o !== r && o.cat && (o.amount > 0) === (r.amount > 0) && simConcept(o.concept, r.concept) >= SIM_MIN);
+    if (o) { r.cat = o.cat; r.sub = o.sub; r.auto = true; r.from = o.concept; }
+  });
+}
+/* Al elegir una categoría a mano, se aplica también a los movimientos parecidos que no hayas tocado */
+function pk(i, v) {
+  const [c, s] = v.split('|'), r = imp.rows[i]; r.cat = c; r.sub = s || ''; r.auto = false; r.from = ''; r.set = true;
+  if (!c) return;
+  let n = 0;
+  imp.rows.forEach(o => { if (o !== r && !o.set && (o.amount > 0) === (r.amount > 0) && (o.cat !== c || o.sub !== r.sub) && simConcept(o.concept, r.concept) >= SIM_MIN) { o.cat = c; o.sub = r.sub; o.auto = true; o.from = r.concept; n++; } });
+  if (n) { rv(); toast('Aplicada también a ' + n + ' movimiento' + (n === 1 ? '' : 's') + ' parecido' + (n === 1 ? '' : 's')); }
+}
 function okImp() {
   const L = imp.rows.filter(r => r.on), accId = ($('#pa') || { value: imp.acc }).value;
   L.forEach(r => { S.tx.push({ id: uid(), date: r.date, concept: r.concept, amount: r.amount, acc: accId, cat: r.cat, sub: r.sub, note: r.note, tr: 0 }); if (r.cat) S.rules[norm(r.concept)] = { cat: r.cat, sub: r.sub }; });
