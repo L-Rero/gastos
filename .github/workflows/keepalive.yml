@@ -1,0 +1,53 @@
+# Keep-alive de Supabase (Gastos y Tareas de casa usan el mismo proyecto)
+# - Supabase pausa los proyectos gratuitos tras 7 días sin actividad: cada 3 días se consulta
+#   la tabla `keepalive` (sin datos personales, solo lectura).
+# - GitHub desactiva las tareas programadas de los repositorios públicos tras 60 días sin
+#   cambios: si el último cambio tiene más de 45 días, se añade un commit vacío.
+# Se puede lanzar a mano desde GitHub › Actions › "Keep-alive de Supabase" › Run workflow.
+
+name: Keep-alive de Supabase
+
+on:
+  schedule:
+    - cron: "23 6 */3 * *"   # cada 3 días a las 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Consultar la tabla keepalive
+        run: |
+          set -euo pipefail
+          # La URL y la clave anon son públicas (están en config.js); no hacen falta secretos.
+          url=$(grep -o "supabaseUrl: '[^']*'" config.js | cut -d"'" -f2)
+          clave=$(grep -o "supabaseAnonKey: '[^']*'" config.js | cut -d"'" -f2)
+          respuesta=$(curl --silent --show-error --fail-with-body --retry 3 --retry-delay 10 --max-time 30 \
+            -H "apikey: ${clave}" -H "Authorization: Bearer ${clave}" \
+            "${url%/}/rest/v1/keepalive?select=id,nota&limit=1")
+          echo "Respuesta de Supabase: ${respuesta}"
+          if ! grep -q '"nota":"ok"' <<< "${respuesta}"; then
+            echo "::error::La tabla keepalive no ha devuelto la fila esperada (¿se ejecutó supabase/keepalive.sql?)"
+            exit 1
+          fi
+          echo "✔ Supabase sigue activo"
+
+      - name: Evitar que GitHub desactive esta tarea por inactividad
+        run: |
+          ultimo=$(git log -1 --format=%ct)
+          dias=$(( ( $(date +%s) - ultimo ) / 86400 ))
+          echo "Días desde el último cambio: ${dias}"
+          if [ "${dias}" -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Keep-alive: mantener activa la tarea programada"
+            git push
+          fi
