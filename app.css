@@ -1,3 +1,5 @@
+/* Lo marcado como oculto no se muestra nunca (la pantalla de bloqueo y el selector de año lo necesitan) */
+[hidden]{display:none!important}
 :root{--bg:#F2F2F7;--hd:rgba(242,242,247,.8);--sf:#fff;--ink:#1C1C1E;--mu:#8E8E93;--ln:rgba(60,60,67,.12);--ac:#007AFF;--ng:#FF3B30;--ps:#248A3D;--f:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#000;--hd:rgba(0,0,0,.72);--sf:#1C1C1E;--ink:#F5F5F7;--mu:#98989D;--ln:rgba(84,84,88,.5);--ac:#0A84FF;--ng:#FF453A;--ps:#30D158}}
 :root[data-theme="dark"]{--bg:#000;--hd:rgba(0,0,0,.72);--sf:#1C1C1E;--ink:#F5F5F7;--mu:#98989D;--ln:rgba(84,84,88,.5);--ac:#0A84FF;--ng:#FF453A;--ps:#30D158}
