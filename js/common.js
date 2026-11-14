@@ -1,5 +1,6 @@
 /* Utilidades compartidas por las apps del hogar (Gastos y Tareas). */
-const today = () => new Date().toISOString().slice(0,10);
+/* Fecha de hoy «YYYY-MM-DD» en la hora local del dispositivo (no en UTC). */
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => (b % 36).toString(36)).join('');
 const dc = o => JSON.parse(JSON.stringify(o));
 const sj = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).sort().reduce((a, x) => (a[x] = v[x], a), {}) : v);

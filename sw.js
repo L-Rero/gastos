@@ -1,6 +1,6 @@
 /* Service worker: guarda la app para que abra sin conexión. Nunca guarda datos del usuario
  * (las llamadas a Supabase no pasan por la caché). Cambia VERSION al publicar cambios. */
-const VERSION = 'gastos-v4';
+const VERSION = 'gastos-v5';
 const ASSETS = ['./', 'index.html', 'app.css', 'config.js', 'manifest.webmanifest',
   'js/crypto.js', 'js/common.js', 'js/core.js', 'js/sync.js', 'js/pdfparse.js', 'js/ui.js', 'js/setup.js',
   'vendor/chart.umd.min.js', 'vendor/supabase.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
