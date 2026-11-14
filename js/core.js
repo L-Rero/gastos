@@ -2,14 +2,9 @@
 const MS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const CAT0 = [['Alquileres/hipoteca','g',[]],['Gastos fijos','g',['Suscripciones/pagos mensuales','Coche/transporte']],['Gastos suministro','g',['Luz','Gas','Agua','Basuras y otros']],['Compras','g',['Supermercado','Cafés/snacks','Ropa','Compras Internet','Mascotas','Retirada de efectivo']],['Ocio','g',['Cenas','Compras','Otros']],['Ingresos','i',['Salario','Otros ingresos']]].map(([n,t,s])=>({n,t,s}));
 const COL = ['#0A84FF','#BF5AF2','#30D158','#FF9F0A','#FF375F','#64D2FF','#5E5CE6','#FFD60A','#AC8E68','#8E8E93'];
-const today = () => new Date().toISOString().slice(0,10);
 const blank = () => ({ v:2, acc:[], cats:JSON.parse(JSON.stringify(CAT0)), catsU:0, tx:[], rules:{}, plan:[], nts:[], del:{}, cfg:{ base: today() }, cfgU:0 });
 let S = blank();
 
-const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => (b % 36).toString(36)).join('');
-const dc = o => JSON.parse(JSON.stringify(o));
-const sj = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).sort().reduce((a, x) => (a[x] = v[x], a), {}) : v);
-const noU = x => JSON.stringify(x, (k, v) => k === 'u' ? undefined : v);
 const norm = c => String(c||'').toUpperCase().replace(/[0-9\/\-\.\*#]+/g,' ').replace(/\s+/g,' ').trim();
 
 /* ───── Migración de copias del prototipo (artefacto) ───── */
@@ -52,12 +47,6 @@ function stamp() {
   // olvida borrados de hace más de 400 días
   const old = now - 400 * 864e5; Object.keys(S.del).forEach(k => { if (S.del[k] < old) delete S.del[k]; });
 }
-function mergeList(a, b, del) {
-  const m = new Map();
-  (a||[]).forEach(x => m.set(x.id, x));
-  (b||[]).forEach(y => { const x = m.get(y.id); if (!x || (y.u||0) > (x.u||0)) m.set(y.id, y); });
-  return [...m.values()].filter(x => !(del[x.id] && del[x.id] >= (x.u||0)));
-}
 function merge(L, R) {
   const del = Object.assign({}, L.del);
   Object.keys(R.del||{}).forEach(k => { if (!(del[k] >= R.del[k])) del[k] = R.del[k]; });
@@ -68,7 +57,6 @@ function merge(L, R) {
   return { v: 2, acc: mergeList(L.acc, R.acc, del), tx: mergeList(L.tx, R.tx, del), plan: mergeList(L.plan, R.plan, del), nts: mergeList(L.nts, R.nts, del),
     rules, del, cats: rc ? R.cats : L.cats, catsU: rc ? R.catsU : L.catsU, cfg: rf ? R.cfg : L.cfg, cfgU: rf ? R.cfgU : L.cfgU };
 }
-const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 function docsOf(s, known) {
   const d = { meta: { acc: [...s.acc].sort(byId), cats: s.cats, catsU: s.catsU, rules: s.rules, del: s.del, cfg: s.cfg, cfgU: s.cfgU },
     plan: { items: [...s.plan].sort(byId) }, notes: { items: [...s.nts].sort(byId) } };
@@ -86,133 +74,11 @@ function fromDocs(p) {
   return r;
 }
 
-/* ───── Dispositivo, guardado local cifrado ───── */
-const DEV = { d: null, key: null, sm: { revs: {}, pushed: {} } };
-let persistT = null;
-async function persistNow() {
-  clearTimeout(persistT); persistT = null;
-  if (!DEV.key) return;
-  try { await IDB.set('state', await CR.encrypt(DEV.key, { S, sm: DEV.sm })); }
-  catch (e) { console.error(e); toast('No se pudo guardar en el dispositivo'); }
-}
-function save() {
-  stamp();
-  clearTimeout(persistT); persistT = setTimeout(persistNow, 250);
-  SYNC.schedule(1500);
-}
-async function loadState() {
-  const e = await IDB.get('state');
-  if (!e) { S = blank(); rebase(); return; }
-  const o = await CR.decrypt(DEV.key, e.iv, e.data);
-  S = Object.assign(blank(), o.S); DEV.sm = o.sm || { revs: {}, pushed: {} }; rebase();
-}
-document.addEventListener('visibilitychange', () => { if (document.hidden && persistT) persistNow(); });
-
-/* ───── Sincronización con Supabase (solo datos cifrados) ───── */
-const SYNC = (() => {
-  let sb = null, busy = false, again = false, t = null, status = 'local', lastSeen = 0, pendRender = false;
-  const cfg = window.GASTOS_CONFIG || {};
-  const configured = () => !!(cfg.supabaseUrl && cfg.supabaseAnonKey && !/TU_/.test(cfg.supabaseUrl + cfg.supabaseAnonKey));
-  const client = () => {
-    if (!sb && configured() && window.supabase) sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'gastos-auth' } });
-    return sb;
-  };
-  const on = () => DEV.d && DEV.d.mode === 'sync' && client();
-  const setSt = s => { status = s; const e = document.getElementById('syncst'); if (e) e.outerHTML = syncBadge(); };
-  const schedule = ms => { if (!on()) return; clearTimeout(t); t = setTimeout(run, ms || 0); };
-
-  async function pushDoc(k, obj) {
-    const hh = DEV.d.hh.id, kv = DEV.d.hh.key_version, e = await CR.encrypt(DEV.key, obj), rev = DEV.sm.revs[k];
-    if (rev == null) {
-      const { error } = await sb.from('docs').insert({ household_id: hh, doc_id: k, rev: 1, key_version: kv, iv: e.iv, data: e.data });
-      if (error) { if (error.code === '23505') return 'conflict'; throw error; }
-      DEV.sm.revs[k] = 1;
-    } else {
-      const { data, error } = await sb.from('docs').update({ rev: rev + 1, key_version: kv, iv: e.iv, data: e.data })
-        .eq('household_id', hh).eq('doc_id', k).eq('rev', rev).select('rev');
-      if (error) throw error;
-      if (!data || !data.length) return 'conflict';
-      DEV.sm.revs[k] = rev + 1;
-    }
-    return 'ok';
-  }
-
-  async function run() {
-    if (!on()) return;
-    if (busy) { again = true; return; }
-    if (!navigator.onLine) { setSt('off'); return; }
-    busy = true; setSt('busy');
-    let changed = false;
-    try {
-      const { data: ses } = await sb.auth.getSession();
-      if (!ses || !ses.session) throw { code: 'auth' };
-      const hh = DEV.d.hh.id;
-      for (let round = 0; round < 4; round++) {
-        const { data: list, error } = await sb.from('docs').select('doc_id,rev,key_version').eq('household_id', hh);
-        if (error) throw error;
-        if (list.some(d => d.key_version > DEV.d.hh.key_version)) throw { code: 'rekey' };
-        const stale = list.filter(d => DEV.sm.revs[d.doc_id] !== d.rev).map(d => d.doc_id);
-        if (stale.length) {
-          const { data: rows, error: e2 } = await sb.from('docs').select('doc_id,rev,iv,data,key_version').eq('household_id', hh).in('doc_id', stale);
-          if (e2) throw e2;
-          const part = {};
-          for (const r of rows) {
-            if (r.key_version !== DEV.d.hh.key_version) throw { code: 'rekey' };
-            part[r.doc_id] = await CR.decrypt(DEV.key, r.iv, r.data);
-            DEV.sm.revs[r.doc_id] = r.rev; DEV.sm.pushed[r.doc_id] = sj(part[r.doc_id]);
-          }
-          const before = sj(docsOf(S));
-          S = merge(S, fromDocs(part)); rebase();
-          if (sj(docsOf(S)) !== before) changed = true;
-        }
-        const d = docsOf(S, DEV.sm.revs); let conflict = false;
-        for (const k of Object.keys(d)) {
-          const j = sj(d[k]); if (DEV.sm.pushed[k] === j) continue;
-          if (await pushDoc(k, d[k]) === 'conflict') { conflict = true; break; }
-          DEV.sm.pushed[k] = j;
-        }
-        if (!conflict) break;
-      }
-      // ¿se ha revocado este dispositivo desde otro?
-      if (DEV.d.deviceId) {
-        const { data: dv, error: e3 } = await sb.from('devices').select('revoked').eq('id', DEV.d.deviceId).maybeSingle();
-        if (!e3 && (!dv || dv.revoked)) { await wipeDevice('Este dispositivo se ha desvinculado del hogar. Sus datos se han borrado.'); return; }
-        if (Date.now() - lastSeen > 36e5) { lastSeen = Date.now(); sb.from('devices').update({ last_seen: new Date().toISOString() }).eq('id', DEV.d.deviceId).then(() => {}); }
-      }
-      await persistNow();
-      setSt('ok');
-      if (changed) safeRender();
-    } catch (e) {
-      console.warn('sync', e);
-      if (e && e.code === 'rekey') { setSt('rekey'); showRekey(); }
-      else if (e && (e.code === 'auth' || e.status === 401 || /JWT|token/i.test(e.message||''))) setSt('auth');
-      else { setSt('err'); setTimeout(() => schedule(0), 20000); }
-    }
-    busy = false;
-    if (again) { again = false; schedule(500); }
-  }
-  function safeRender() {
-    const a = document.activeElement;
-    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { if (!pendRender) { pendRender = true; a.addEventListener('blur', () => { pendRender = false; setTimeout(safeRender, 50); }, { once: true }); } return; }
-    if (typeof render === 'function' && !document.getElementById('cpp')) render();
-  }
-  setInterval(() => { if (!document.hidden) schedule(0); }, 30000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(300); });
-  window.addEventListener('online', () => schedule(300));
-  return { client, configured, schedule, run, get status() { return status; }, set status(v) { setSt(v); } };
-})();
-
-function syncBadge() {
-  const st = DEV.d && DEV.d.mode === 'sync' ? SYNC.status : 'local';
-  const M = { local: ['', 'Guardado solo en este dispositivo (cifrado)'], ok: ['', 'Sincronizado con el hogar (cifrado)'], busy: ['w', 'Sincronizando…'], off: ['w', 'Sin conexión: se sincronizará al volver'], err: ['e', 'Error de sincronización: se reintentará'], auth: ['e', 'Inicia sesión de nuevo para sincronizar'], rekey: ['e', 'La contraseña del hogar ha cambiado'] }[st] || ['', ''];
-  return `<div id="syncst" class="sync ${M[0]}"${st === 'auth' ? ' onclick="go(\'aj\')" style="cursor:pointer"' : ''}><i></i>${M[1]}</div>`;
-}
 
 /* ───── Cálculos (portados del prototipo y generalizados) ───── */
 const Y0 = new Date().getFullYear(), cm = new Date().getMonth();
 const eur = n => (n||0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 const eur2 = n => (n||0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const base = () => (S.cfg && S.cfg.base) || '0000-00-00';
 const isHid = a => !!a.hid;
 const hidAcc = id => { const a = S.acc.find(x => x.id === id); return !!a && isHid(a); };

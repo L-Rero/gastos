@@ -1,4 +1,6 @@
-/* Primer arranque, hogar compartido, invitaciones, dispositivos y bloqueo con Face ID. */
+/* Primer arranque, hogar compartido, invitaciones, dispositivos y bloqueo con Face ID.
+ * Compartido por Gastos y Tareas. Cada app define en APP: name, desc, start(), clear(),
+ * refreshSettings() y, opcionalmente, afterRelogin(). */
 const ERR = e => {
   const m = (e && (e.message || e.error_description || e.code)) || String(e);
   if (/invalid login credentials/i.test(m)) return 'Email o contraseña incorrectos.';
@@ -18,15 +20,15 @@ const busyBtn = (id, on, label) => { const b = document.getElementById(id); if (
 async function saveDev() { await IDB.set('device', DEV.d); }
 async function startApp() {
   document.body.classList.remove('setup'); $('#setup').hidden = true; $('#app').hidden = false;
-  await loadState(); render(); SYNC.schedule(200);
+  await loadState(); APP.start(); SYNC.schedule(200);
 }
 
 /* ───── Bienvenida ───── */
 function welcome() {
   const ok = SYNC.configured();
-  setupBox(`<h1>Gastos</h1><p class="st">Tus cuentas, movimientos y notas se guardan <b>cifrados</b>. Nadie más puede leerlos: ni el servidor ni quien publica la app.</p>
+  setupBox(`<h1>${esc(APP.name)}</h1><p class="st">${APP.desc} se guardan <b>cifrados</b>. Nadie más puede leerlos: ni el servidor ni quien publica la app.</p>
   ${ok ? `<button class="bt w" onclick="authStep('create')">Crear un hogar</button><p class="st">Para compartir los datos con tu pareja o familia. Se sincroniza entre vuestros dispositivos.</p>
-  <button class="bt t w" onclick="authStep('join')">Unirme a un hogar con una invitación</button><p class="st">Si alguien ya ha creado el hogar y te ha dado un código.</p>` : ''}
+  <button class="bt t w" onclick="authStep('join')">Entrar en un hogar que ya existe</button><p class="st">Si te han invitado, o si ya eres miembro (por ejemplo, porque usas la otra app del hogar).</p>` : ''}
   <button class="bt g w" onclick="localSetup()">Usar solo en este dispositivo</button><p class="st">Sin cuenta y sin sincronizar. Podrás pasarte a un hogar más adelante.</p>`);
 }
 async function localSetup() {
@@ -80,7 +82,7 @@ function createStep() {
   <p class="st">La <b>contraseña del hogar</b> cifra todos los datos. Compártela solo en persona con quien vaya a usar la app. <b>Si la olvidáis, los datos no se pueden recuperar</b>: guárdala en el llavero o en un gestor de contraseñas.</p>
   <input id="hp" class="w" type="password" autocomplete="new-password" placeholder="Contraseña del hogar (mín. 10)">
   <input id="hp2" class="w" type="password" autocomplete="new-password" placeholder="Repite la contraseña del hogar">
-  <input id="dn" class="w" placeholder="Nombre de este dispositivo" value="${esc(devName())}" maxlength="80">
+  <input id="dn" class="w" placeholder="Nombre de este dispositivo" value="${esc(devName() + ' · ' + APP.name)}" maxlength="80">
   <label class="st"><input type="checkbox" id="hkeep" checked> Traer los datos que ya hay en este dispositivo</label>
   <button class="bt w" id="hb" onclick="doCreate()">Crear hogar</button><p id="smsg" class="st"></p>
   <button class="bt g w" onclick="signOutSetup()">Usar otra cuenta</button>`);
@@ -112,8 +114,11 @@ async function registerDevice(name) {
 
 /* ───── Unirse a un hogar ───── */
 let JOIN = null;
-function joinStep() {
-  setupBox(`<h2>Unirme a un hogar</h2><p class="st">Escribe el código que te han dado (caduca a los 7 días y solo vale una vez).</p>
+let MINE = [];
+async function joinStep() {
+  MINE = [];
+  try { const { data } = await SYNC.client().from('households').select('id,name,salt,verifier,kdf_iter,key_version').order('created_at'); MINE = data || []; } catch (e) {}
+  setupBox(`<h2>Entrar en un hogar</h2>${MINE.length ? `<p class="st">Hogares de los que ya eres miembro:</p>${MINE.map((h, i) => `<button class="bt t w" onclick="JOIN=MINE[${i}];hhPwStep()">${esc(h.name)}</button>`).join('')}<p class="st" style="margin-top:12px">¿Te han invitado a otro? Escribe el código:</p>` : '<p class="st">Escribe el código que te han dado (caduca a los 7 días y solo vale una vez).</p>'}
   <input id="jc" class="w" placeholder="Código de invitación" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase;letter-spacing:.1em">
   <button class="bt w" id="jb" onclick="doJoin()">Continuar</button><p id="smsg" class="st"></p>
   <button class="bt g w" onclick="signOutSetup()">Usar otra cuenta</button>`);
@@ -131,7 +136,7 @@ function hhPwStep(rekey) {
   const h = JOIN;
   setupBox(`<h2>${rekey ? 'La contraseña del hogar ha cambiado' : 'Hogar «' + esc(h.name) + '»'}</h2><p class="st">${rekey ? 'Alguien del hogar ha cambiado la contraseña. Escribe la nueva para seguir sincronizando.' : 'Escribe la contraseña del hogar. Te la tiene que decir quien lo creó.'}</p>
   <input id="hp" class="w" type="password" autocomplete="current-password" placeholder="Contraseña del hogar">
-  ${rekey ? '' : `<input id="dn" class="w" placeholder="Nombre de este dispositivo" value="${esc(devName())}" maxlength="80">`}
+  ${rekey ? '' : `<input id="dn" class="w" placeholder="Nombre de este dispositivo" value="${esc(devName() + ' · ' + APP.name)}" maxlength="80">`}
   <button class="bt w" id="hb" onclick="doHhPw(${rekey ? 1 : 0})">Desbloquear</button><p id="smsg" class="st"></p>
   ${rekey ? '<button class="bt g w" onclick="wipeAsk()">Borrar los datos de este dispositivo</button>' : ''}`);
   document.getElementById('hp').addEventListener('keydown', e => { if (e.key === 'Enter') doHhPw(rekey); });
@@ -166,7 +171,7 @@ async function signOutSetup() { try { await SYNC.client().auth.signOut({ scope: 
 const LOCK = {
   available: async () => !!(window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()),
   async enable() {
-    const cred = await navigator.credentials.create({ publicKey: { challenge: CR.rand(32), rp: { name: 'Gastos', id: location.hostname }, user: { id: CR.rand(16), name: 'Gastos · ' + (DEV.d.deviceName || devName()), displayName: 'Gastos' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }], authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' }, timeout: 60000 } });
+    const cred = await navigator.credentials.create({ publicKey: { challenge: CR.rand(32), rp: { name: 'Gastos', id: location.hostname }, user: { id: CR.rand(16), name: APP.name + ' · ' + (DEV.d.deviceName || devName()), displayName: 'Gastos' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }], authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' }, timeout: 60000 } });
     DEV.d.lock = { id: CR.b64(cred.rawId), min: (DEV.d.lock && DEV.d.lock.min) || 5 }; await saveDev();
   },
   async verify() {
@@ -180,7 +185,7 @@ async function offerLock() {
 }
 let hiddenAt = 0, locked = false;
 function lockScreen() {
-  locked = true; cpClose(); closeModal(); charts.forEach(c => c.destroy()); charts = []; const m = M(); if (m) m.innerHTML = '';
+  locked = true; closeModal(); APP.clear();
   setupBox(`<h2>Gastos</h2><p class="st">La app está bloqueada.</p><button class="bt w" id="ulb" onclick="unlock()">Desbloquear con Face ID</button><p id="smsg" class="st"></p>`);
 }
 async function unlock() {
@@ -218,18 +223,18 @@ async function secLoad() {
 }
 async function relogin() { AUTH_UP = false; AUTH_NEXT = 'relogin'; const sb = SYNC.client();
   setupBox(`<h2>Iniciar sesión</h2><input id="ae" class="w" type="email" autocomplete="email" placeholder="Email"><input id="ap" class="w" type="password" autocomplete="current-password" placeholder="Contraseña de la cuenta"><button class="bt w" id="ab1" onclick="doRelogin()">Entrar</button><p id="smsg" class="st"></p><button class="bt g w" onclick="startApp()">Cancelar</button>`); }
-async function doRelogin() { busyBtn('ab1', true); const { error } = await SYNC.client().auth.signInWithPassword({ email: $('#ae').value.trim(), password: $('#ap').value }); if (error) { busyBtn('ab1', false); return setupMsg(ERR(error), 1); } V = 'aj'; startApp(); }
+async function doRelogin() { busyBtn('ab1', true); const { error } = await SYNC.client().auth.signInWithPassword({ email: $('#ae').value.trim(), password: $('#ap').value }); if (error) { busyBtn('ab1', false); return setupMsg(ERR(error), 1); } if (APP.afterRelogin) APP.afterRelogin(); startApp(); }
 async function toggleLock(on) {
   if (on) { try { await LOCK.enable(); toast('Face ID activado'); } catch (e) { toast('No se pudo activar: ' + (e.message || e.name)); } }
   else { delete DEV.d.lock; await saveDev(); }
-  vAj();
+  APP.refreshSettings();
 }
 async function newInvite() {
   const code = CR.code(10), sb = SYNC.client();
   const { error } = await sb.from('invites').insert({ code, household_id: DEV.d.hh.id });
   if (error) return toast('No se pudo crear la invitación: ' + ERR(error));
   const pretty = code.slice(0, 5) + '-' + code.slice(5), url = location.origin + location.pathname;
-  const w = modal(`<h3>Invitación al hogar</h3><p class="st">Código (válido 7 días, un solo uso):</p><p style="font:700 26px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-align:center;margin:8px 0 14px">${pretty}</p><p class="st">La otra persona debe: 1) abrir <b>${esc(url)}</b> en Safari y añadirla a la pantalla de inicio; 2) elegir «Unirme a un hogar» y crear su cuenta; 3) escribir este código y la <b>contraseña del hogar</b>.<br><br><b>No envíes la contraseña del hogar por el mismo mensaje que el código.</b> Mejor díselo en persona.</p><div class="bar" style="justify-content:flex-end">${navigator.share ? '<button class="bt t" id="shi">Compartir código</button>' : ''}<button class="bt" onclick="closeModal();vAj()">Hecho</button></div>`);
+  const w = modal(`<h3>Invitación al hogar</h3><p class="st">Código (válido 7 días, un solo uso):</p><p style="font:700 26px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-align:center;margin:8px 0 14px">${pretty}</p><p class="st">La otra persona debe: 1) abrir <b>${esc(url)}</b> en Safari y añadirla a la pantalla de inicio; 2) elegir «Unirme a un hogar» y crear su cuenta; 3) escribir este código y la <b>contraseña del hogar</b>.<br><br><b>No envíes la contraseña del hogar por el mismo mensaje que el código.</b> Mejor díselo en persona.</p><div class="bar" style="justify-content:flex-end">${navigator.share ? '<button class="bt t" id="shi">Compartir código</button>' : ''}<button class="bt" onclick="closeModal();APP.refreshSettings()">Hecho</button></div>`);
   const b = w.querySelector('#shi'); if (b) b.onclick = () => navigator.share({ text: `Te invito a la app de gastos de nuestro hogar.\nAbre ${url} en Safari, añádela a la pantalla de inicio y elige «Unirme a un hogar».\nCódigo: ${pretty}` }).catch(() => {});
 }
 async function revokeDev(id) {
@@ -239,21 +244,29 @@ async function revokeDev(id) {
 }
 async function signOutAll() {
   const ok = await askChoice('Cerrar sesión en todos', 'Se cerrará la sesión de tu cuenta en todos tus dispositivos (incluido este). Los datos siguen en cada dispositivo y se sincronizarán al volver a iniciar sesión.', [{ label: 'Cancelar', cls: 'g', v: 0 }, { label: 'Cerrar sesión', cls: 'd', v: 1 }]);
-  if (!ok) return; await SYNC.client().auth.signOut({ scope: 'global' }); SYNC.status = 'auth'; toast('Sesión cerrada en todos los dispositivos'); vAj();
+  if (!ok) return; await SYNC.client().auth.signOut({ scope: 'global' }); SYNC.status = 'auth'; toast('Sesión cerrada en todos los dispositivos'); APP.refreshSettings();
 }
 async function changeHhPw() {
-  const pw = await askText('Nueva contraseña del hogar', { pw: 1, newpw: 1, confirm: 1, min: 10, ok: 'Cambiar', text: 'Todos los datos se volverán a cifrar. Los demás dispositivos del hogar tendrán que escribir la nueva contraseña. Si la olvidáis, los datos no se pueden recuperar.' });
+  const pw = await askText('Nueva contraseña del hogar', { pw: 1, newpw: 1, confirm: 1, min: 10, ok: 'Cambiar', text: 'Se volverán a cifrar todos los datos del hogar (Gastos y Tareas). Los demás dispositivos tendrán que escribir la nueva contraseña. Si la olvidáis, los datos no se pueden recuperar.' });
   if (!pw) return;
   toast('Volviendo a cifrar los datos…', 10000);
   try {
     await SYNC.run();
     if (SYNC.status !== 'ok') throw { message: 'Primero hay que sincronizar. Comprueba la conexión.' };
     const sb = SYNC.client(), hh = DEV.d.hh, salt = CR.newSalt(), key = await CR.deriveKey(pw, salt), verifier = await CR.makeVerifier(key), kv = hh.key_version + 1;
-    const d = docsOf(S, DEV.sm.revs), rows = [];
-    for (const k of Object.keys(d)) { const e = await CR.encrypt(key, d[k]); rows.push({ household_id: hh.id, doc_id: k, rev: (DEV.sm.revs[k] || 0) + 1, key_version: kv, iv: e.iv, data: e.data }); }
-    const { error: e1 } = await sb.from('docs').upsert(rows, { onConflict: 'household_id,doc_id' }); if (e1) throw e1;
+    // Se vuelven a cifrar TODOS los documentos del hogar (los de las dos apps)
+    const { data: old, error: e0 } = await sb.from('docs').select('doc_id,rev,iv,data').eq('household_id', hh.id); if (e0) throw e0;
+    const rows = [];
+    for (const r of old) { const e = await CR.encrypt(key, await CR.decrypt(DEV.key, r.iv, r.data)); rows.push({ household_id: hh.id, doc_id: r.doc_id, rev: r.rev + 1, key_version: kv, iv: e.iv, data: e.data }); }
+    if (rows.length) { const { error: e1 } = await sb.from('docs').upsert(rows, { onConflict: 'household_id,doc_id' }); if (e1) throw e1; }
     const { error: e2 } = await sb.from('households').update({ salt, verifier, kdf_iter: CR.ITER, key_version: kv }).eq('id', hh.id); if (e2) throw e2;
-    rows.forEach(r => { DEV.sm.revs[r.doc_id] = r.rev; DEV.sm.pushed[r.doc_id] = sj(d[r.doc_id]); });
+    rows.forEach(r => { if (DEV.sm.revs[r.doc_id] != null) DEV.sm.revs[r.doc_id] = r.rev; });
+    // y el estado local de la otra app en este dispositivo, si comparte almacenamiento
+    for (const k of ['state', 'tareas-state']) {
+      if (k === APP.stateKey) continue;
+      const b = await IDB.get(k); if (!b) continue;
+      try { await IDB.set(k, await CR.encrypt(key, await CR.decrypt(DEV.key, b.iv, b.data))); } catch (e) {}
+    }
     DEV.key = key; DEV.d.key = key; hh.key_version = kv; await saveDev(); await persistNow();
     toast('Contraseña del hogar cambiada');
   } catch (e) { toast('No se pudo cambiar: ' + ERR(e), 6000); }

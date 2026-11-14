@@ -1,8 +1,18 @@
 /* Interfaz: vistas portadas del prototipo, sin datos personales ni dependencias de Claude. */
-const $ = s => document.querySelector(s), M = () => document.getElementById('m');
+const M = () => document.getElementById('m');
+/* Conexión con las piezas compartidas (sync.js y setup.js) */
+const TAREAS_URL = 'https://l-rero.github.io/tareas/';
+const APP = {
+  name: 'Gastos', desc: 'Tus cuentas, movimientos y notas', stateKey: 'state',
+  ownDoc: id => !id.startsWith('t-'),          // los documentos «t-…» son de la app Tareas
+  start() { render(); },
+  clear() { cpClose(); charts.forEach(c => c.destroy()); charts = []; const m = M(); if (m) m.innerHTML = ''; },
+  goSettings() { go('aj'); },
+  refreshSettings() { if (V === 'aj') vAj(); },
+  afterRelogin() { V = 'aj'; },
+};
 let Y = Y0, V = 'panel', H = 5, Q = '', charts = [], imp = null, lastPdfText = '';
 const pad2 = n => String(n).padStart(2, '0');
-const toast = (m, ms) => { const e = $('#ts'); if (!e) return; e.textContent = m; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => e.hidden = true, ms || 3500); };
 const tgl = k => { const e = $('#n' + k); if (e) e.hidden = !e.hidden; };
 const color = n => { const i = S.cats.findIndex(c => c.n === n), c = S.cats[i]; return c && /^#[0-9a-f]{6}$/i.test(c.col||'') ? c.col : COL[Math.max(0, i) % COL.length]; };
 const color_ = n => S.cats.some(c => c.n === n) ? color(n) : '#8E8E93';
@@ -10,38 +20,6 @@ const ink = h => { const n = parseInt(String(h).slice(1), 16), r = n >> 16, g = 
 const subColor = (cn, sn) => { const c = S.cats.find(x => x.n === cn); return c && c.sc && /^#[0-9a-f]{6}$/i.test(c.sc[sn]||'') ? c.sc[sn] : color(cn); };
 const tint = (hx, a) => { const n = parseInt(hx.slice(1), 16), f = s => Math.round(((n >> s) & 255) + (255 - ((n >> s) & 255)) * a); return 'rgb(' + f(16) + ',' + f(8) + ',' + f(0) + ')'; };
 const resv = a => (a && +a.res) || 0;
-
-/* ───── Ventanas modales sencillas ───── */
-function modal(html, onClose) {
-  closeModal(); const w = document.createElement('div'); w.className = 'mdw'; w.id = 'mdw';
-  w.innerHTML = `<div class="md" role="dialog" aria-modal="true">${html}</div>`;
-  w.addEventListener('mousedown', e => { if (e.target === w) { closeModal(); onClose && onClose(); } });
-  document.body.appendChild(w); const f = w.querySelector('input,textarea,button'); if (f) setTimeout(() => f.focus(), 30); return w;
-}
-const closeModal = () => { const w = $('#mdw'); if (w) w.remove(); };
-function askText(title, o) {
-  o = o || {};
-  return new Promise(res => {
-    const w = modal(`<h3>${esc(title)}</h3>${o.text ? `<p class="st">${o.text}</p>` : ''}<input id="mq" class="w" type="${o.pw ? 'password' : 'text'}" autocomplete="${o.pw ? (o.newpw ? 'new-password' : 'current-password') : 'off'}" placeholder="${esc(o.ph||'')}">${o.confirm ? '<input id="mq2" class="w" type="password" autocomplete="new-password" placeholder="Repítela" style="margin-top:8px">' : ''}<p class="st" id="mqe"></p><div class="bar" style="justify-content:flex-end"><button class="bt g" id="mqc">Cancelar</button><button class="bt" id="mqo">${esc(o.ok||'Aceptar')}</button></div>`, () => res(null));
-    const ok = () => { const v = w.querySelector('#mq').value;
-      if (o.min && v.length < o.min) return w.querySelector('#mqe').textContent = 'Mínimo ' + o.min + ' caracteres.';
-      if (o.confirm && v !== w.querySelector('#mq2').value) return w.querySelector('#mqe').textContent = 'Las contraseñas no coinciden.';
-      closeModal(); res(v); };
-    w.querySelector('#mqo').onclick = ok; w.querySelector('#mqc').onclick = () => { closeModal(); res(null); };
-    w.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') ok(); }));
-  });
-}
-function askChoice(title, text, opts) {
-  return new Promise(res => {
-    const w = modal(`<h3>${esc(title)}</h3><p class="st">${text}</p><div class="bar" style="justify-content:flex-end">${opts.map((o, i) => `<button class="bt ${o.cls||''}" data-i="${i}">${esc(o.label)}</button>`).join('')}</div>`, () => res(null));
-    w.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { closeModal(); res(opts[+b.dataset.i].v); });
-  });
-}
-async function downloadFile(name, text, type) {
-  const blob = new Blob([text], { type: type || 'application/json' });
-  try { const f = new File([blob], name, { type: blob.type }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-}
 
 /* ───── Selector de categorías (del prototipo) ───── */
 const CHV = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>';
@@ -309,7 +287,7 @@ function vAj() {
   : `<div class="cd"><div class="bar"><h3 style="margin:0;flex:1">Cuentas</h3><button class="bt g" onclick="EA=dc(S.acc);vAj()">Modificar</button></div>${S.acc.length ? '<div class="ch" style="height:240px;margin-top:10px"><canvas id="ca"></canvas></div>' : '<p class="st">Aún no hay cuentas. Pulsa «Modificar» para añadir la primera.</p>'}<p style="font-size:17px;margin:12px 0 4px">Patrimonio total (todas las cuentas): <b>${eur(wealthAll('9999-12-31'))}</b></p><p class="st">Patrimonio en el panel: <b>${eur(cur())}</b> (último saldo importado de cada cuenta, o el saldo base, más los movimientos posteriores). El total incluye las cuentas ocultas, que no aparecen en el panel.</p></div>`;
   const catV = EC ? `<div class="cd"><h3>Categorías · modificando</h3>${EC.map((c, i) => `<div class="cd" style="box-shadow:none;background:var(--bg)"><div class="row">${cswatch('cc' + i, c.col, `EC[${i}].col=this.value`)}<input value="${esc(c.n)}" ${c.t === 'i' ? 'disabled' : ''} oninput="EC[${i}].n=this.value" style="font-weight:600">${c.t === 'i' ? '<small>categoría de ingresos</small>' : `<button class="ic" title="Quitar categoría" onclick="EC.splice(${i},1);vAj()">×</button>`}</div>${c.s.map((s, j) => `<div class="row">${cswatch('cs' + i + '_' + j, s.col || c.col, `EC[${i}].s[${j}].col=this.value`)}<input value="${esc(s.n)}" oninput="EC[${i}].s[${j}].n=this.value"><button class="ic" title="Quitar subcategoría" onclick="EC[${i}].s.splice(${j},1);vAj()">×</button></div>`).join('')}<div class="row"><input id="es${i}" placeholder="Nueva subcategoría"><button class="bt g" onclick="addSub(${i})">+</button></div></div>`).join('')}<div class="row"><input id="nc" placeholder="Nueva categoría de gasto"><button class="bt g" onclick="addCat()">+ Añadir a la lista</button></div><div class="bar"><button class="bt" onclick="saveCat()">Guardar cambios</button><button class="bt g" onclick="EC=null;vAj()">Cancelar</button></div><p class="st">Al renombrar, los movimientos, previsiones y reglas existentes se actualizan. No se puede quitar una categoría que se esté usando.</p></div>`
   : `<div class="cd"><div class="bar"><h3 style="margin:0;flex:1">Categorías</h3><button class="bt g" onclick="EC=S.cats.map(c=>({o:c.n,n:c.n,t:c.t,col:color(c.n),s:c.s.map(x=>({o:x,n:x,col:(c.sc&&c.sc[x])||undefined}))}));vAj()">Modificar</button></div>${S.cats.map(c => `<div class="row"><span class="pl" style="background:${color(c.n)};color:${ink(color(c.n))};cursor:default">${esc(c.n)}</span>${c.s.map(x => `<span class="pl" style="background:${subColor(c.n, x)};color:${ink(subColor(c.n, x))};cursor:default;font-weight:500">${esc(x)}</span>`).join('')}</div>`).join('')}</div>`;
-  M().innerHTML = secCard() + accV + catV + `<div class="cd"><h3>Copia de seguridad</h3><div class="row"><button class="bt g" onclick="expB()">Exportar copia cifrada</button><label class="bt g fl">Importar copia<input type="file" accept=".json,application/json" onchange="impB(this.files[0]);this.value=''"></label></div><p class="st">La copia se cifra con una contraseña que eliges al exportarla. También puedes importar aquí el archivo exportado desde el prototipo de Claude.</p><div class="row"><label class="st">Fecha de inicio de las cuentas <input type="date" value="${base()}" onchange="S.cfg=Object.assign({},S.cfg,{base:this.value});save();render()"></label></div></div>${syncBadge()}`;
+  M().innerHTML = secCard() + accV + catV + `<div class="cd"><h3>Tareas de casa</h3><p class="st">La app de tareas del hogar usa la misma cuenta y el mismo hogar.</p><a class="bt t" href="${TAREAS_URL}">Abrir Tareas de casa</a></div><div class="cd"><h3>Copia de seguridad</h3><div class="row"><button class="bt g" onclick="expB()">Exportar copia cifrada</button><label class="bt g fl">Importar copia<input type="file" accept=".json,application/json" onchange="impB(this.files[0]);this.value=''"></label></div><p class="st">La copia se cifra con una contraseña que eliges al exportarla. También puedes importar aquí el archivo exportado desde el prototipo de Claude.</p><div class="row"><label class="st">Fecha de inicio de las cuentas <input type="date" value="${base()}" onchange="S.cfg=Object.assign({},S.cfg,{base:this.value});save();render()"></label></div></div>${syncBadge()}`;
   accChart(); secLoad();
 }
 function accChart() {
