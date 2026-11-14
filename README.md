@@ -8,7 +8,10 @@ App web instalable (PWA) para llevar el balance de gastos e ingresos de un hogar
 - **PDF leído en el móvil.** El extracto no sale del dispositivo.
 - **Hogares independientes.** Cada hogar tiene sus datos y su contraseña. Un amigo puede crear el suyo en la misma app sin ver nada de los demás.
 
-## Puesta en marcha
+## Estado
+Publicada en https://l-rero.github.io/gastos/ y conectada al proyecto de Supabase «Gastos» (esquema instalado y aislamiento entre hogares comprobado).
+
+## Puesta en marcha (para otra instalación)
 
 ### 1. Supabase (base de datos)
 1. Crea un proyecto en supabase.com (región Europa).
