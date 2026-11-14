@@ -97,10 +97,7 @@ const cur = () => wealthAt('9999-12-31');
 const rnet = y => real(y).reduce((a, m) => a + m.i - m.g, 0);
 const pnet = y => Array.from({ length: 12 }, (_, m) => pm(y, m)).reduce((a, m) => a + m.i - m.g, 0);
 function closeY(y) { if (y < Y0) return openY(y + 1); if (y === Y0) { const lm = Math.max(-1, ...S.tx.filter(t => t.date.startsWith(String(y)) && !t.tr && !hidAcc(t.acc)).map(t => +t.date.slice(5,7) - 1)); return cur() + Array.from({ length: 11 - lm }, (_, k) => pm(y, lm + 1 + k)).reduce((a, m) => a + m.i - m.g, 0); } return closeY(y - 1) + pnet(y); }
-/* Datos del año escritos a mano (Panel → «Ahorro real vs previsto» → Ajustar): dinero a 1 de enero y ahorro previsto en el año */
-const yrCfg = y => (S.cfg && S.cfg.yr && S.cfg.yr[y]) || {};
-const num = v => v != null && v !== '' && isFinite(+v);
-function openY(y) { if (num(yrCfg(y).ini)) return +yrCfg(y).ini; if (y === Y0) return cur() - rnet(y); if (y > Y0) return closeY(y - 1); return openY(y + 1) - rnet(y); }
+function openY(y) { if (y === Y0) return cur() - rnet(y); if (y > Y0) return closeY(y - 1); return openY(y + 1) - rnet(y); }
 const ryrs = () => [...new Set(S.tx.filter(t => !t.tr && !hidAcc(t.acc)).map(t => +t.date.slice(0,4)))].sort((a, b) => a - b);
 
 /* Similitud entre conceptos (0 a 1), ignorando números y signos. Se exige ≥ 0,9 para categorizar solo. */
