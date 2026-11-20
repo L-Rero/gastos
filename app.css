@@ -131,3 +131,6 @@ body.setup header,body.setup #tabbar{display:none!important}
 .md{background:var(--sf);border-radius:22px;padding:20px;width:100%;max-width:480px;max-height:85vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .md h3{margin:0 0 8px;font-size:18px}
 .md textarea{width:100%;background:var(--bg)}
+
+/* Sin zoom al tocar dos veces la pantalla */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
